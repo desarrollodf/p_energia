@@ -20,4 +20,4 @@ datos = blp.bdh(
     start_date=fecha_inicio
 )
 
-datos.to_excel('datos.xlsx', index=False)
+datos.to_pandas().to_excel('datos.xlsx', index=False)
