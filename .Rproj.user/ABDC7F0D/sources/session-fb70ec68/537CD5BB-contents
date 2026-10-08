@@ -1,0 +1,181 @@
+library(shiny)
+library(tidyquant)
+library(readxl)
+library(dplyr)
+library(tidyverse)
+library(zoo)
+library(ggplot2)
+library(plotly)
+library(scales)
+library(lubridate)
+library(rsconnect)
+library(RColorBrewer)
+library(shinyWidgets)
+library(shinyBS)
+
+series_precios <- c(
+  "Brent", "WTI",
+  "Gas natural HH", "Gas natural TTF",
+  "Gasóleo", "Gasolina", "Diésel"
+)
+
+precios <- read_xlsx("datos.xlsx", sheet="Hoja1") %>%
+  slice(-1) %>%
+  na.omit() %>%
+  setNames(c("Fecha", series_precios)) %>%
+  mutate(Fecha = as.Date(as.numeric(Fecha), origin = "1900-01-01")) %>%
+  pivot_longer(cols = -Fecha, values_to = "Valor", names_to = "Serie") %>%
+  mutate(
+    Valor = as.numeric(Valor),
+    Serie = factor(Serie, levels=series_precios)
+    ) %>%
+  filter(Fecha >= max(Fecha) - years(2))
+
+fecha_lastyr <- precios %>%
+  arrange(Fecha) %>%
+  mutate(Anho = year(Fecha)) %>%
+  filter(Anho == max(Anho) - 1) %>%
+  reframe(Fecha = last(Fecha)) %>%
+  pull(Fecha)
+
+# Datos
+
+# UI
+ui <- fluidPage(
+  tags$head(
+    
+    tags$style(HTML("
+    
+    body, .container-fluid, .main-panel {
+      background-color: transparent !important;
+      margin: 0 !important;
+      padding-bottom: 0 !important;
+    }
+
+  "))
+  ),
+  
+  tags$h4(
+    "Precios de la Energía",
+    tags$span(
+      icon("question-circle"), 
+      id = "info_icon", 
+      style = "cursor: pointer; color: #007BFF;"
+    )
+  ),
+  bsTooltip(
+    id = "info_icon",
+    title = paste(
+      "Series corresponden a los principales contratos de referencia en Estados Unidos,",
+      "excepto por el crudo Brent, que es de referencia internacional,",
+      "y el gas natural TTF, que es de referencia en Europa."
+    ),
+    placement = "right",
+    trigger = "click"
+  ),
+  
+  prettyRadioButtons(
+    inputId="formato",
+    choices=c(
+      "Petróleo"="petroleo",
+      "Gas"="gas",
+      "Combustible"="combustible"
+    ),
+    selected="petroleo",
+    inline=TRUE,
+    label=NULL
+  ),
+  
+  fluidRow(
+    column(width = 12,
+           div(
+             style = "position: relative; left: -20px;",
+             plotlyOutput("grafico", height = "300px", width = "100%")
+           ),
+           tags$div(
+             style = "display: flex; justify-content: space-between; align-items: center;
+                    margin-top: 0px;",
+             tags$div(
+               style = "font-size: 11px; color: black; display: flex; flex-direction: column; align-items: flex-start;",
+               tags$img(src = "icono_flecha.svg", height = "30px", style = "margin-bottom: 2px;"),
+               "Fuente: Bloomberg"
+             ),
+             tags$img(src = "footer.png", height = "35px")
+             )
+           )
+    )
+)
+
+# Server
+server <- function(input, output) {
+  
+  output$grafico <- renderPlotly({
+    
+    colores <- setNames(
+      brewer.pal(length(series_precios), "Dark2"),
+      series_precios
+    )
+    titulo_yaxis <- case_when(
+      input$formato == "petroleo" ~ "Dólares por barril (US$)",
+      TRUE ~ "Base = 100"
+      )
+    
+    if (input$formato == "petroleo") {
+      
+      procesado <- precios %>%
+        filter(Serie %in% series_precios[1:2])
+      
+    } else if (input$formato == "gas") {
+      
+      procesado <- precios %>%
+        group_by(Serie) %>%
+        mutate(Valor = (Valor / first(Valor)) * 100) %>%
+        ungroup()
+      
+    } else {
+          
+      
+      
+        }
+    
+    plot_ly(
+      procesado,
+      x=~Fecha,
+      y=~Valor,
+      color=~Serie,
+      colors=colores,
+      type="scatter",
+      mode="lines",
+      hovertemplate="%{fullData.name}: %{y:,.1f}<extra></extra>"
+      ) %>%
+      style(visible = "legendonly", traces = length(series_precios)) %>%
+      plotly::layout(
+        dragmode = FALSE,
+        hovermode = "x unified",
+        hoverlabel = list(bgcolor = "white"),
+        legend = list(
+          orientation = "h",
+          y = 1.2, x = 0
+          ),
+        yaxis = list(
+          title = titulo_yaxis,
+          tickformat = ",.0f"
+          ),
+        xaxis = list(title = ""),
+        paper_bgcolor = "rgba(0,0,0,0)",
+        plot_bgcolor = "rgba(0,0,0,0)"
+      ) %>%
+      plotly::config(
+        displayModeBar = FALSE,
+        showTips = FALSE,
+        scrollZoom = FALSE,
+        doubleClick = FALSE,
+        staticPlot = FALSE,
+        displaylogo = FALSE,
+        responsive = TRUE,
+        locale = "es"
+      )
+  })
+}
+
+shinyApp(ui, server)

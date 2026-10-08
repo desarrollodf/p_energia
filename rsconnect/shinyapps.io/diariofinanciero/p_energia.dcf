@@ -1,0 +1,10 @@
+name: p_energia
+title:
+username: diariofinanciero
+account: diariofinanciero
+server: shinyapps.io
+hostUrl: https://api.shinyapps.io/v1
+appId: 16832004
+bundleId: 12664044
+url: https://diariofinanciero.shinyapps.io/p_energia/
+version: 1

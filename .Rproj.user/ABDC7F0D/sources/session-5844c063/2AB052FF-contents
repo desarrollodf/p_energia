@@ -1,0 +1,168 @@
+library(shiny)
+library(readxl)
+library(dplyr)
+library(tidyverse)
+library(zoo)
+library(ggplot2)
+library(plotly)
+library(scales)
+library(lubridate)
+library(rsconnect)
+library(shinyWidgets)
+library(shinyBS)
+
+divisas_spot <- read_xlsx("ranking_divisas.xlsx", sheet = "spot") %>%
+  mutate(Divisa = substr(Ticker, 1, 3)) %>%
+  rename(Spot = YTD)
+
+divisas_carry_bruto <- read_xlsx("ranking_divisas.xlsx", sheet = "interes")
+
+columnas_carry <- names(divisas_carry_bruto)[-1]
+divisas_carry <- divisas_carry_bruto %>% slice_tail(n = -2) %>%
+  setNames(c("Fecha", columnas_carry)) %>%
+  mutate(Fecha = as.Date(as.numeric(Fecha), origin = "1899-12-30")) %>%
+  pivot_longer(cols = -Fecha, values_to = "Valor", names_to = "Divisa") %>%
+  mutate(Valor = as.numeric(Valor)) %>%
+  group_by(Divisa) %>%
+  reframe(Interes = (last(Valor) / first(Valor) - 1) * 100) %>%
+  mutate(Divisa = substr(Divisa, 1, 3))
+
+divisas = left_join(divisas_spot, divisas_carry, by = "Divisa") %>%
+  select(Divisa, Spot, Interes) %>%
+  mutate(Total = Spot + Interes) %>%
+  pivot_longer(cols = -Divisa, values_to = "Retorno", names_to = "Medicion") %>%
+  left_join(divisas_spot %>% select(Name, Divisa), by = "Divisa") %>%
+  na.omit() %>%
+  mutate(
+    Name = gsub(" Spot", "", Name, fixed = TRUE),
+    Name = gsub("SPOT (TOM)", "", Name, fixed = TRUE),
+    )
+
+# Datos
+
+# UI
+ui <- fluidPage(
+  tags$head(
+    tags$style(HTML("
+    
+    body, .container-fluid, .main-panel {
+      background-color: transparent !important;
+      margin: 0 !important;
+      padding-bottom: 0 !important;
+    }
+  
+  "))
+  ),
+  
+  tags$h4(
+    "Ranking Divisas Emergentes",
+    tags$span(
+      icon("question-circle"), 
+      id = "info_icon", 
+      style = "cursor: pointer; color: #007BFF;"
+    )
+  ),
+  bsTooltip(
+    id = "info_icon",
+    title = paste(
+      "El gráfico muestra los siete mejores y peores retornos",
+      "entre las divisas emergentes del ranking de Bloomberg.",
+      "El retorno spot corresponde a la variación de precio de la divisa,",
+      "mientras que el retorno total incorpora también la rentabilidad en depósitos."
+    ),
+    placement = "right",
+    trigger = "click"
+  ),
+  
+  prettyRadioButtons(
+    inputId = "medicion",
+    choices = c(
+      "Retorno spot" = "Spot",
+      "Retorno total" = "Total"
+      ),
+    selected = "Spot",
+    label = NULL,
+    inline = TRUE
+  ),
+
+  fluidRow(
+    column(width = 12,
+           div(
+             style = "position: relative; left: -20px;",
+             plotlyOutput("grafico", height = "300px", width = "100%")
+           ),
+           tags$div(
+             style = "display: flex; justify-content: space-between; align-items: center;
+                    margin-top: 11px;",
+             tags$div(
+               style = "font-size: 11px; color: black; display: flex; flex-direction: column; align-items: flex-start;",
+               tags$img(src = "icono_flecha.svg", height = "30px", style = "margin-bottom: 2px;"),
+               "Fuente: Bloomberg"
+             ),
+             tags$img(src = "footer.png", height = "35px")
+             )
+           )
+    )
+)
+
+server <- function(input, output) {
+  
+  output$grafico <- renderPlotly({
+    
+    filtrado <- divisas %>%
+        filter(Medicion == input$medicion) %>%
+        arrange(desc(Retorno))
+    
+    top <- filtrado %>% slice_head(n = 7)
+    sub <- filtrado %>% slice_tail(n = 7)
+    combinado <- bind_rows(top, sub)
+    
+    paleta <- colorRampPalette(c("steelblue", "white", "red"))(nrow(combinado))
+    combinado$color <- paleta
+    
+      plot_ly(
+        combinado,
+        x = ~Retorno,
+        y = ~reorder(Divisa, Retorno),
+        type = "bar",
+        textposition = "none",
+        showlegend = FALSE,
+        marker = list(color = combinado$color),
+        customdata = ~Name,
+        hovertemplate = "%{customdata}: %{x:.1f}%<extra></extra>"
+      ) %>%
+        plotly::layout(
+          hovermode = "y unified",
+          hoverlabel = list(bgcolor = "white"),
+          dragmode = FALSE,
+          yaxis = list(title = ""),
+          xaxis = list(title = "Retorno % año en curso"),
+          paper_bgcolor = "rgba(0,0,0,0)",
+          plot_bgcolor = "rgba(0,0,0,0)",
+          shapes = list(
+          list(
+            type = "line",
+            xref = "paper",
+            x0 = 0,
+            x1 = 1,
+            yref = "y",
+            y0 = nrow(combinado) / 2 - 0.5,
+            y1 = nrow(combinado) / 2 - 0.5,
+            line = list(color = "grey", width = 2)
+          )
+        )
+      ) %>%
+        plotly::config(
+        displayModeBar = FALSE,
+        showTips = FALSE,
+        scrollZoom = FALSE,
+        doubleClick = FALSE,
+        staticPlot = FALSE,
+        displaylogo = FALSE,
+        responsive = TRUE,
+        locale = "es"
+      )
+  })
+}
+
+shinyApp(ui, server)
